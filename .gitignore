@@ -8,3 +8,7 @@ _targets/
 data/
 
 *.html
+
+R/gavin_ex.R
+
+R/yeast_ppi.R
