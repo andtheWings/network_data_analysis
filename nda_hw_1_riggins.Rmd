@@ -1,0 +1,200 @@
+---
+title: "Homework 1 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "4/12/2022"
+output: html_document
+---
+
+Load needed libraries:
+
+```{r include=FALSE}
+library(dplyr)
+library(tidygraph)
+library(ggraph)
+library(stringr)
+library(tidyr)
+```
+
+## Make the Graph
+
+Read in BioGRID's human-specific interaction dataset:
+
+```{r}
+raw <- readr::read_delim("data/BIOGRID-ORGANISM-Homo_sapiens-4.4.207.tab3.txt")
+```
+
+Show datasets with the most interactions:
+
+```{r}
+janitor::tabyl(raw, `Publication Source`) |> 
+    arrange(desc(n)) |> 
+    head(10)
+```
+
+The publication source "PUBMED:33961781" corresponds to [Huttlin et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33961781/). This research publication contains information on 14,586 unique proteins and 118,162 interactions for human cell lines 293T (embryonic kidney origin) and HCT116 (colon cancer origin). The researchers detected interactions using affinity-purification mass spectrometry (AP-MS), which is a selective method for characterizing macromolecular binding, resulting in a low false discovery rate, but likely omitting many weak or transient protein interactions.
+
+Build a graph of the Huttlin et al. (2021) data using the {Tidygraph} API for igraph:
+
+```{r}
+# Filter for only the Huttlin data source
+huttlin <- 
+    raw |> 
+    filter(`Publication Source` %in% "PUBMED:33961781") |> 
+    separate(
+        col = Qualifications,
+        into = c(NA, NA, "cell_line"),
+        sep = " ",
+        remove = FALSE
+    ) |> 
+    mutate(
+        cell_line = 
+            case_when(
+                cell_line %in% "HEK" ~ "293T",
+                cell_line %in% "HCT116" ~ "HCT116"
+            )
+    )
+
+# Assemble a nodes dataframe from the "A" interactors
+huttlin_nodes_A <-
+    huttlin |> 
+    select(
+        cell_line,
+        official_symbol = `Official Symbol Interactor A`,
+        entrez = `Entrez Gene Interactor A`,
+        biogrid_interactor = `BioGRID ID Interactor A`,
+        systematic_name = `Systematic Name Interactor A`,
+        synonyms = `Synonyms Interactor A`,
+        swiss_prot = `SWISS-PROT Accessions Interactor A`,
+        trembl = `TREMBL Accessions Interactor A`,
+        refseq = `REFSEQ Accessions Interactor A`
+    ) |> 
+    # `Entrez Gene Interactor A` was parsed incorrectly as character type
+    mutate(
+        entrez = as.numeric(entrez)
+    ) |> 
+    unite(
+        col = cell_line_and_official_symbol,
+        cell_line, official_symbol,
+        remove = FALSE
+    )
+    
+
+# Assemble a nodes dataframe from the "B" interactors then bind to the "A" interactors
+huttlin_nodes <-
+    huttlin |> 
+    select(
+        cell_line,
+        official_symbol = `Official Symbol Interactor B`,
+        entrez = `Entrez Gene Interactor B`,
+        biogrid_interactor = `BioGRID ID Interactor B`,
+        systematic_name = `Systematic Name Interactor B`,
+        synonyms = `Synonyms Interactor B`,
+        swiss_prot = `SWISS-PROT Accessions Interactor B`,
+        trembl = `TREMBL Accessions Interactor B`,
+        refseq = `REFSEQ Accessions Interactor B`
+    ) |> 
+    unite(
+        col = cell_line_and_official_symbol,
+        cell_line, official_symbol,
+        remove = FALSE
+    ) |> 
+    bind_rows(huttlin_nodes_A) |> 
+    # Remove redundant observations
+    distinct()
+
+
+
+# Assemble an edges dataframe
+huttlin_edges <-
+    huttlin |> 
+    unite(
+        col = "from",
+        cell_line, `Official Symbol Interactor A`,
+        remove = FALSE
+    ) |>
+    unite(
+        col = "to",
+        cell_line, `Official Symbol Interactor B`,
+        remove = FALSE
+    ) |> 
+    select(
+        from,
+        to,
+        cell_line,
+        official_symbol_from = `Official Symbol Interactor A`,
+        official_symbol_to = `Official Symbol Interactor B`,
+        biogrid_interaction = `#BioGRID Interaction ID`,
+        score = Score,
+        modification = Modification,
+        qualifications = Qualifications,
+        tags = Tags,
+        ontology_term_ids = `Ontology Term IDs`,
+        ontology_term_names = `Ontology Term Names`,
+        ontology_term_qualifier_ids = `Ontology Term Qualifier IDs`,
+        ontology_term_qualifier_names = `Ontology Term Qualifier Names`,
+        ontology_term_types = `Ontology Term Types`
+    ) |> 
+    mutate(score = scales::rescale(-1*as.numeric(score), to = c(1,10)))
+           
+
+
+# Assemble the graph object
+huttlin_graph <- 
+    tbl_graph(
+        nodes = huttlin_nodes, 
+        edges = huttlin_edges
+    )
+
+
+huttlin_graph
+```
+
+The number of nodes and edges in the graph object reflect similar orders of magnitude to those reported in the publication:
+
+| source       | nodes | edges  |
+|--------------|-------|--------|
+| publication  | 14586 | 118162 |
+| graph object | 14511 | 169808 |
+
+Sidenote: The graph object retains class properties both from the tidygraph API (tbl_graph) **and** the igraph backend (igraph):
+
+```{r}
+class(huttlin_graph)
+```
+## Plot the graph
+
+This graph is so large, my laptop crashes when trying to plot the whole thing. Instead we'll plot the local neighborhood subgraph of the most abundant bait protein.
+
+List most common bait proteins:
+
+```{r}
+janitor::tabyl(huttlin_edges, from) |> 
+    arrange(desc(n)) |> 
+    head(10)
+```
+Extract the local neighborhood of the GPR182 protein:
+
+```{r}
+GPR182_graph <-
+    huttlin_graph |> 
+    convert(
+        to_local_neighborhood,
+        node = which(.N()$official_symbol == "GPR182"),
+        order = 1,
+        mode = "all"
+    )
+
+```
+
+Create a simple plot of the subgraph:
+
+```{r}
+ggraph(GPR182_graph, layout='igraph', algorithm='nicely') + 
+    geom_edge_link() + 
+    geom_node_point(aes(color = cell_line))
+```
+
+```{r}
+saveRDS(huttlin_graph, "data/huttlin_graph.RDS")
+```
+
