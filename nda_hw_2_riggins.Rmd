@@ -1,0 +1,226 @@
+---
+title: "Homework 2 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "4/18/2022"
+bibliography: network_citations.bib
+output: html_document
+---
+
+## Prep
+
+Load needed dependencies:
+
+```{r echo=FALSE}
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(targets)
+```
+
+Ensure data pipeline is fresh and load it:
+
+```{r}
+targets::tar_make()
+targets::tar_load(MUC_huttlin_graph)
+```
+
+The graph I'll use in this assignment was derived by starting with the graph of human protein interactions described by @huttlinDualProteomescaleNetworks2021 then finding its intersection of nodes with a list of piglet orthologs described by @parkComparativeProteomicAnalysis2009. Each protein in Park's list was differentially expressed between piglets with malformed umbilical cords (MUC) and piglets without. See my [github repository](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_shared_MUC_orthologs.R), to view source code for how this graph was created.
+
+Each node in the graph represents a specific protein from a specific cell line. The cell line 293T comes from human embryonic kidney cells and the cell line HCT116 comes from human colon cancer cells. The edges represent macromolecular protein interactions as identified by affinity purification. The researchers used a computational classifier called ComPASS-Plus, which assigns a score to distinguish high-confidence interacting proteins with high specificity (score of >0.75). Our visualization will incorporate cell line origin and ComPASS-Plus score.
+
+## Data Wrangling
+
+To make the ComPASS-score more useful to the layout engine in igraph, we will rescale it to a range of 1 to 10:
+
+```{r}
+MUC_huttlin_graph <-
+    MUC_huttlin_graph |> 
+    activate("edges") |> 
+    mutate(
+        rescaled_score = 
+            scales::rescale(
+                as.numeric(score), 
+                to = c(1, 10)
+            )
+    )
+```
+
+To convince ourselves that the distribution of scores has been preserved, we'll plot the original scores:
+
+```{r}
+DataExplorer::plot_histogram(as.numeric(as_tibble(MUC_huttlin_graph)$score))
+```
+
+And rescaled scores:
+
+```{r}
+DataExplorer::plot_histogram(as_tibble(MUC_huttlin_graph)$rescaled_score)
+```
+
+## Plot the Graph
+
+```{r}
+ggraph(
+    MUC_huttlin_graph, 
+    layout='igraph', 
+    # Use Fruchterman-Reingold layout algorithm (force-directed)
+    algorithm='fr',
+    # Weight edge distance by the rescaled ComPASS-Plus score
+    weights = rescaled_score
+)  + 
+geom_edge_link(
+    # Color edges by the rescaled ComPASS-Plus score
+    aes(color = rescaled_score), 
+    width = 0.5,
+    # Transparency
+    alpha = 0.6,
+    # Arrow specifications
+    arrow = arrow(length = unit(1, 'mm')), 
+    end_cap = circle(0.5, 'mm')
+) +
+# Color palette and label for edges in the legend
+scale_edge_color_viridis(
+    name = "Rescaled ComPASS-Plus",
+    option = "A",
+    direction = -1
+) +
+geom_node_point(
+    # Color nodes by cell line type
+    aes(color = cell_line), 
+    size = 0.6,
+    alpha = 0.6
+) +
+# Color palette and label for edges in the legend
+scale_color_manual(
+    name = "Cell Line",
+    # There's a package of color palettes inspired by Wes Anderson movies!
+    values = wesanderson::wes_palette(
+        name = "GrandBudapest2",
+        n = 2,
+        type = "discrete"
+    )
+) +
+# Use the generic graph theme
+theme_graph() +
+# Add a title
+labs(
+    title = "Human proteins whose pig orthologs are differentially \n expressed in the malformed umbilical cord phenotype"
+)
+```
+
+## Discussion
+
+### Edge Weighting
+
+One subtlety that is hard to appreciate in the graph's totality is how edge distance is weighted by ComPASS-Plus score such that proteins with higher confidence of true interaction are attracted slightly closer together. To illustrate, we'll visualize just a subset of the graph both with a weighted and unweighted layout.
+
+```{r}
+# Create a sub-graph just with proteins that interact with 293T_HBB
+`293T_HBB_graph` <- 
+    convert(
+        MUC_huttlin_graph,
+        to_local_neighborhood,
+        node = which(.N()$cell_line_and_official_symbol == "293T_HBB"),
+        order = 1,
+        mode = "all"
+    )
+
+# Graph it without weights
+ggraph(
+    `293T_HBB_graph`, 
+    layout='igraph', 
+    algorithm='fr'
+)  + 
+geom_edge_link(
+    aes(color = rescaled_score), 
+    width = 0.5,
+    alpha = 0.75,
+    arrow = arrow(length = unit(2, 'mm')), 
+    end_cap = circle(2.5, 'mm')
+) +
+scale_edge_color_viridis(
+    name = "Rescaled ComPASS-Plus",
+    option = "A",
+    direction = -1
+) +
+# Just for fun, change the nodes to have text labels
+geom_node_label(
+    aes(
+        color = cell_line,
+        label = official_symbol
+    ),
+    size = 2,
+    label.padding = unit(0.15, "lines"),
+    alpha = 0.8
+)  +
+scale_color_manual(
+    name = "Cell Line",
+    values = wesanderson::wes_palette(
+        name = "GrandBudapest2",
+        n = 2,
+        type = "discrete"
+    )
+) +
+theme_graph() +
+labs(
+    title = "Unweighted protein interactions for 293T_HBB"
+)
+```
+
+
+```{r}
+# Graph it with weights
+ggraph(
+    `293T_HBB_graph`, 
+    layout='igraph', 
+    algorithm='fr',
+    weights = rescaled_score
+) + 
+geom_edge_link(
+    aes(color = rescaled_score), 
+    width = 0.5,
+    alpha = 0.75,
+    arrow = arrow(length = unit(2, 'mm')), 
+    end_cap = circle(2.75, 'mm')
+) +
+scale_edge_color_viridis(
+    name = "Rescaled ComPASS-Plus",
+    option = "A",
+    direction = -1
+) +
+geom_node_label(
+    aes(
+        color = cell_line,
+        label = official_symbol
+    ),
+    size = 2,
+    label.padding = unit(0.15, "lines"),
+    alpha = 0.8
+) +
+scale_color_manual(
+    name = "Cell Line",
+    values = wesanderson::wes_palette(
+        name = "GrandBudapest2",
+        n = 2,
+        type = "discrete"
+    )
+) +
+theme_graph() +
+labs(
+    title = "Weighted protein interactions for 293T_HBB"
+)
+```
+
+These sub-graph plots also make it easier to see how are arrows are directed from a bait protein to a prey protein.
+
+### Missing Data:
+
+When considering missing interactions for each of the cell lines, one must consider bait **and** prey coverage. As of publication in Cell, Huttlin et al. (2021) had tested in 293T every validated human protein from the [hORFeome V8.1 Library ](https://www.broadinstitute.org/scientific-community/science/platforms/gpp/horfeome-v81-library) as bait, while they had only tested about half of the hORFeome library in the HCT116 cell line. A full accounting of baits used and interactions identified in each cell line can be obtained from Supplemental Table 1. The prey coverage is more scant at 70% of the bait set in 293T and 52% in HCT116. A full accounting of each replicate of bait-prey pairing in each cell line can be obtained from Supplemental Table 2.
+
+### Errors:
+
+@chiangCoverageErrorModels2007 outline three types of potential error in assays of protein-protein interactions, these being related to coverage, systematic measurement error, and stochastic measurement error. The data from Huttlin et al. (2021) is vulnerable to all three types--the first as described in the previous section. One issue of systematic measurement error is how some proteins are more apt to form complexes when in the bait role versus the prey role. Another source of systematic measurement error is how the probability of detecting a protein interaction is affected by relative protein abundance in the medium. Notably, the ComPASS-Plus system of scoring *does* makes adjustments based on relative protein abundance. Finally, in order to reduce stochastic error, which is random, the authors tried to replicate bait-prey pairings as much as possible.
+
+The authors tried to account for some other sources of error too. One was how a protein will elute in different size-based fractions depending on whether it has formed into a protein complex vs a one-to-one interaction. Another was how the prior expectation for an interaction to be present is dependent on the type of cell line used plus how much it has already been characterized. Another consideration is how the rate of stochastic error can be modulated by the sequence of filtering steps used in scoring systems like ComPASS-Plus and the hyperparameters selected for each filtering step.
+
+# Citations {-}
