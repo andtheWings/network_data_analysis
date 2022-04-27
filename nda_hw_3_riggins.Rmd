@@ -1,0 +1,332 @@
+---
+title: "Homework 3 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "4/25/2022"
+output: html_document
+---
+
+## Prep
+
+Load needed dependencies:
+
+```{r message=FALSE, warning=FALSE}
+library(igraph)
+library(ggdist)
+library(ggraph)
+library(networkD3)
+library(targets)
+library(tidygraph)
+library(tidyverse)
+source("R/wrangling_generic_graphs.R")
+```
+
+Ensure data pipeline is fresh and load it:
+
+```{r}
+tar_make()
+tar_load(MUC_huttlin_graph)
+
+maximal_muc_huttlin <- 
+    MUC_huttlin_graph |> 
+    # As instructed, use the undirected version of the graph for this homework
+    to_undirected() |> 
+    # And only use the maximally connected component
+    to_max_connected_component()
+```
+
+## Overall Network Topologies
+
+Visualize the graph derived from @huttlinDualProteomescaleNetworks2021. Just for fun, I'm doing it as an interactive plot this time:
+
+```{r}
+simpleNetwork(
+    as_tibble(
+        activate(maximal_muc_huttlin, edges)
+    ),
+    Source = "official_symbol_from",
+    Target = "official_symbol_to",
+    zoom = TRUE
+)
+```
+
+
+For comparison of overall topology, we will also make a random graph using the Erdos-Renyi algorithm.
+
+```{r}
+maximal_erdos <-
+    play_erdos_renyi(
+        # Use the same number of nodes and edges as in the PPI graph
+        n = gorder(MUC_huttlin_graph),
+        m = gsize(MUC_huttlin_graph),
+        directed = FALSE
+    ) |> 
+    to_max_connected_component()
+
+
+simpleNetwork(
+    as_tibble(
+        activate(maximal_erdos, edges)
+    ),
+    Source = "from",
+    Target = "to",
+    zoom = TRUE
+)
+```
+
+Our `maximal_MUC_huttlin` graph looks much more organized than the `maximal_erdos` graph despite them both deriving from parent graphs with the same number of nodes and edges
+
+### Transitivity and Mean Geodesic Distance
+
+Generate stats about clustering and path lengths:
+
+```{r}
+transitivity_and_geodesic <-
+    tibble(
+        graph_name = c("MUC_huttlin", "erdos"),
+        tbl_graph_obj = list(maximal_muc_huttlin, maximal_erdos)
+    ) |> 
+    mutate(
+        transitivity = map(tbl_graph_obj, ~transitivity(.x)),
+        mean_distance = map(tbl_graph_obj, ~mean_distance(.x))
+    ) |> 
+    unnest(c(transitivity, mean_distance))
+
+transitivity_and_geodesic
+```
+
+`maximal_MUC_huttlin` has a higher clustering coefficient and shorter mean geodesic distance than the `erdos` graph. According to class notes, we expect that if we had a "Small World" graph, than it would indeed have a higher clustering coefficient, but we should have a lower mean path length, which we do not.
+
+### Degree
+
+Plot the degree distribution of `maximal_MUC_huttlin`:
+
+```{r}
+maximal_muc_huttlin |> 
+    activate(nodes) |> 
+    mutate(degree = centrality_degree()) |> 
+    as_tibble() |> 
+    group_by(degree) |> 
+    summarize(degree_count = n()) |> 
+    mutate(
+        degree_proportion = degree_count / sum(degree_count),
+        log_degree = log10(degree),
+        log_degree_proportion = log10(degree_proportion)
+    ) |> 
+    ggplot(
+        aes(
+            x = log_degree,
+            y = log_degree_proportion
+        )
+    ) +
+    geom_point() 
+```
+
+The beginning portion of this log-log tranformed plot has a linear slope consistent with a scale-free graph. The visual topology of the `maximal_MUC_huttlin` graph also seems consistent with scale-free.
+
+```{r}
+maximal_erdos |> 
+    activate(nodes) |> 
+    mutate(degree = centrality_degree()) |> 
+    as_tibble() |> 
+    group_by(degree) |> 
+    summarize(degree_count = n()) |> 
+    mutate(
+        degree_proportion = degree_count / sum(degree_count),
+        log_degree = log10(degree),
+        log_degree_proportion = log10(degree_proportion)
+    ) |> 
+    ggplot(
+        aes(
+            x = log_degree,
+            y = log_degree_proportion
+        )
+    ) +
+    geom_point()
+```
+In contrast, the log-log plot of the random graph follows a more Poisson-like distribution.
+
+## Local network topology descriptors
+
+### Gursoy et al. (2008)
+
+Definitions:
+
+- Hub protein - highly connected protein
+- Closeness - how quickly information can be transferred in a network
+- Betweenness centrality - nodes important to information transfer by mediating many shortest paths
+- HBLC - nodes that mediate many shortest paths, but themselves are not highly connected (connectors between modules)
+
+### Hubs
+
+Identify the nodes with the top 10 highest eigen scores. According to the igraph manual:
+
+> In general, vertices with high eigenvector centralities are those which are connected to many other vertices which are, in turn, connected to many others (and so on).
+
+```{r}
+top_10_hubs <-
+    maximal_muc_huttlin |> 
+    activate(nodes) |> 
+    mutate(hub_score = centrality_eigen()) |> 
+    arrange(desc(hub_score)) |> 
+    as_tibble() |> 
+    select(official_symbol, hub_score) |> 
+    head(10)
+    
+top_10_hubs
+```
+
+Visualize the graph without these top 10 hub nodes:
+
+```{r}
+maximal_muc_huttlin |>
+    anti_join(top_10_hubs, by = "official_symbol") |> 
+    ggraph(layout='igraph', algorithm='fr') +
+    geom_node_point() +
+    geom_edge_link() +
+    theme_graph()
+```
+
+Removing these nodes from the graph makes it more disjoint. From physiologic perspective, these are likely proteins whose roles are relevant to multiple types of cellular function important to formation of a normal umbilical cord. For example, the protein with the highest hub score is LGALS1, which is a Galectin 1, which is a important to proper scaffolding of blood vessels in angiogenesis. 
+
+### Closeness
+
+Identify the nodes with the top 10 highest closeness scores:
+
+```{r}
+top_10_close <-
+    maximal_muc_huttlin |> 
+    activate(nodes) |> 
+    mutate(closeness_score = centrality_closeness()) |> 
+    arrange(desc(closeness_score)) |> 
+    as_tibble() |> 
+    select(official_symbol, closeness_score) |> 
+    head(10)
+
+top_10_close
+```
+
+Visualize the position of these nodes in the network:
+
+```{r}
+maximal_muc_huttlin |>
+    mutate(top_10_close = official_symbol %in% top_10_close$official_symbol) |> 
+    ggraph(layout='igraph', algorithm='fr') +
+    geom_node_point(
+        aes(color = top_10_close)
+    ) +
+    scale_color_manual(values = c("black", "red")) +
+    geom_edge_link(alpha = 0.3) +
+    theme_graph()
+```
+
+Nodes with high closeness are important to efficient information transfer within a network. Perhaps in this context, they represent proteins that act as mediators between functional classes of proteins important to umbilical cord formation. For example, GRID1 is part of glutamate receptor for a channel protein that cannot propagate a signal sent to a cell--perhaps starting cascades for blood vessel or smooth muscle formation.
+
+```{r}
+degree_distribution(maximal_muc_huttlin) |>  class()
+```
+
+
+```{r}
+erdos_renyi_sims <-
+    tibble( 
+        graph_obj = 
+            map(
+                1:1000,
+                ~filter_to_max_connected_component(
+                    play_erdos_renyi(
+                        n = gorder(MUC_huttlin_graph),
+                        m = gsize(MUC_huttlin_graph),
+                        directed = FALSE 
+                    )
+                )
+            ) 
+    )
+
+erdos_renyi_sims <-
+    erdos_renyi_sims |> 
+        mutate(
+            SWI = map(graph_obj, ~qgraph::smallworldIndex(.x))
+        ) |> 
+        unnest(SWI) |> 
+        unnest(SWI)
+```
+
+
+```{r}
+ggplot(erdos_renyi_sims, aes(x = SWI)) +
+    geom_histogram()
+```
+
+```{r}
+EnvStats::demp(x = 2.679, obs = erdos_renyi_sims$SWI)
+```
+```{r}
+EnvStats::pemp(q = 3, obs = erdos_renyi_sims$SWI) - EnvStats::pemp(q = 2.5, obs = erdos_renyi_sims$SWI)
+```
+
+
+### Clustering
+
+Generate stats on transitivity and mean geodesic distance:
+
+```{r}
+meta_stats <-
+    tibble(
+        graph_name = c("maximal", "erdos"),
+        tbl_graph_obj = list(maximal_muc_huttlin, erdos)
+    ) |> 
+    mutate(
+        transitivity = map(tbl_graph_obj, ~transitivity(.x)),
+        mean_distance = map(tbl_graph_obj, ~mean_distance(.x))
+    ) |> 
+    unnest(c(transitivity, mean_distance))
+
+meta_stats
+```
+
+Because the clustering coefficient for the PPI graph is almost 1.5 times larger than the random graph and the mean distance is almost 2 edges smaller, I think it is reasonable to characterize it as a small world graph. 
+
+This is supported by the small world index, which can be indicative of small worldness if greater than one (a rough rule of thumb) [@wattsCollectiveDynamicsSmallworld1998].
+
+```{r}
+qgraph::smallworldIndex(maximal_muc_huttlin)
+```
+
+```{r}
+maximal_muc_huttlin <-
+    maximal_muc_huttlin |> 
+    mutate(degree = centrality_degree())
+
+as_tibble(
+    activate(maximal_muc_huttlin, nodes)
+) |>     
+    ggplot(
+        aes(x = degree)
+    ) +
+    geom_bar()
+
+maximal_muc_huttlin$degree
+```
+
+```{r}
+lattice <-
+    
+```
+
+
+
+```{r}
+sw <-
+    play_smallworld(
+        n_dim = 1,
+        dim_size = 15,
+        order = 3,
+        p = 0.1
+    )
+
+ggraph(sw, layout = 'linear', circular = TRUE) + 
+    geom_node_point() +
+    geom_edge_fan() + 
+    coord_fixed()
+```
+
