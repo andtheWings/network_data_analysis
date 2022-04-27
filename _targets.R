@@ -1,11 +1,12 @@
 library(targets)
 
+source("R/wrangling_generic_graphs.R")
 source("R/wrangling_huttlin.R")
 source("R/wrangling_shared_MUC_orthologs.R")
 
 # Set target-specific options such as packages.
 tar_option_set(
-    packages = c("dplyr", "tidyr", "tidygraph", "ggraph")
+    packages = c("dplyr", "igraph", "tidyr", "tidygraph", "ggraph")
 )
 
 # End this file with a list of target objects.
