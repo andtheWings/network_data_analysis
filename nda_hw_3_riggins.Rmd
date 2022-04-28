@@ -1,7 +1,8 @@
 ---
 title: "Homework 3 for Network Data Analysis"
 author: "Daniel P. Hall Riggins, MD"
-date: "4/25/2022"
+date: "4/27/2022"
+bibliography: network_citations.bib
 output: html_document
 ---
 
@@ -25,7 +26,11 @@ Ensure data pipeline is fresh and load it:
 ```{r}
 tar_make()
 tar_load(MUC_huttlin_graph)
+```
 
+Next, I wrangle the graph for use in this assignment. If interested, see the [source code here](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_generic_graphs.R) for converting a graph to its maximally connected component.
+
+```{r message=FALSE, warning=FALSE}
 maximal_muc_huttlin <- 
     MUC_huttlin_graph |> 
     # As instructed, use the undirected version of the graph for this homework
@@ -52,7 +57,7 @@ simpleNetwork(
 
 For comparison of overall topology, we will also make a random graph using the Erdos-Renyi algorithm.
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 maximal_erdos <-
     play_erdos_renyi(
         # Use the same number of nodes and edges as in the PPI graph
@@ -143,6 +148,7 @@ maximal_erdos |>
     ) +
     geom_point()
 ```
+
 In contrast, the log-log plot of the random graph follows a more Poisson-like distribution.
 
 ## Local network topology descriptors
@@ -212,121 +218,133 @@ maximal_muc_huttlin |>
     mutate(top_10_close = official_symbol %in% top_10_close$official_symbol) |> 
     ggraph(layout='igraph', algorithm='fr') +
     geom_node_point(
-        aes(color = top_10_close)
+        aes(
+            shape = top_10_close,
+            size = top_10_close
+        )
     ) +
-    scale_color_manual(values = c("black", "red")) +
+    scale_shape_manual(values = c("circle", "diamond plus")) +
+    scale_size_manual(values = c(1, 3)) +
     geom_edge_link(alpha = 0.3) +
     theme_graph()
 ```
 
-Nodes with high closeness are important to efficient information transfer within a network. Perhaps in this context, they represent proteins that act as mediators between functional classes of proteins important to umbilical cord formation. For example, GRID1 is part of glutamate receptor for a channel protein that cannot propagate a signal sent to a cell--perhaps starting cascades for blood vessel or smooth muscle formation.
+Nodes with high closeness are important to efficient information transfer within a network. Perhaps in this context, they represent proteins that act as mediators between functional classes of proteins important to umbilical cord formation. For example, GRID1 is part of glutamate receptor for a channel protein that propagates a signal sent to a cell--perhaps starting cascades for blood vessel or smooth muscle formation.
 
-```{r}
-degree_distribution(maximal_muc_huttlin) |>  class()
-```
+### Betweenness
 
+Identify the nodes with the top 10 highest betweenness scores:
 
-```{r}
-erdos_renyi_sims <-
-    tibble( 
-        graph_obj = 
-            map(
-                1:1000,
-                ~filter_to_max_connected_component(
-                    play_erdos_renyi(
-                        n = gorder(MUC_huttlin_graph),
-                        m = gsize(MUC_huttlin_graph),
-                        directed = FALSE 
-                    )
-                )
-            ) 
-    )
-
-erdos_renyi_sims <-
-    erdos_renyi_sims |> 
-        mutate(
-            SWI = map(graph_obj, ~qgraph::smallworldIndex(.x))
-        ) |> 
-        unnest(SWI) |> 
-        unnest(SWI)
-```
-
-
-```{r}
-ggplot(erdos_renyi_sims, aes(x = SWI)) +
-    geom_histogram()
-```
-
-```{r}
-EnvStats::demp(x = 2.679, obs = erdos_renyi_sims$SWI)
-```
-```{r}
-EnvStats::pemp(q = 3, obs = erdos_renyi_sims$SWI) - EnvStats::pemp(q = 2.5, obs = erdos_renyi_sims$SWI)
-```
-
-
-### Clustering
-
-Generate stats on transitivity and mean geodesic distance:
-
-```{r}
-meta_stats <-
-    tibble(
-        graph_name = c("maximal", "erdos"),
-        tbl_graph_obj = list(maximal_muc_huttlin, erdos)
-    ) |> 
-    mutate(
-        transitivity = map(tbl_graph_obj, ~transitivity(.x)),
-        mean_distance = map(tbl_graph_obj, ~mean_distance(.x))
-    ) |> 
-    unnest(c(transitivity, mean_distance))
-
-meta_stats
-```
-
-Because the clustering coefficient for the PPI graph is almost 1.5 times larger than the random graph and the mean distance is almost 2 edges smaller, I think it is reasonable to characterize it as a small world graph. 
-
-This is supported by the small world index, which can be indicative of small worldness if greater than one (a rough rule of thumb) [@wattsCollectiveDynamicsSmallworld1998].
-
-```{r}
-qgraph::smallworldIndex(maximal_muc_huttlin)
-```
-
-```{r}
-maximal_muc_huttlin <-
+```{r message=FALSE, warning=FALSE}
+top_10_between <-
     maximal_muc_huttlin |> 
-    mutate(degree = centrality_degree())
+    activate(nodes) |> 
+    mutate(betweenness_score = centrality_betweenness()) |> 
+    arrange(desc(betweenness_score)) |> 
+    as_tibble() |> 
+    select(official_symbol, betweenness_score) |> 
+    head(10)
 
-as_tibble(
-    activate(maximal_muc_huttlin, nodes)
-) |>     
-    ggplot(
-        aes(x = degree)
+top_10_between
+```
+
+Visualize the position of these nodes in the network:
+
+```{r}
+maximal_muc_huttlin |> 
+    mutate(
+        in_top_10_close = official_symbol %in% top_10_close$official_symbol,
+        in_top_10_between = official_symbol %in% top_10_between$official_symbol,
+        of_interest = official_symbol %in% c(top_10_close$official_symbol, top_10_between$official_symbol)
+    ) |> 
+    ggraph(layout='igraph', algorithm='fr') +
+    geom_node_point(
+        aes(
+            shape = in_top_10_close,
+            color = in_top_10_between,
+            size = of_interest
+        )
     ) +
-    geom_bar()
-
-maximal_muc_huttlin$degree
+    scale_shape_manual(values = c("circle", "diamond plus")) +
+    scale_size_manual(values = c(1, 3)) +
+    scale_color_manual(values = c("black", "red")) +
+    geom_edge_link(alpha = 0.2) +
+    theme_graph()
 ```
 
-```{r}
-lattice <-
-    
-```
+We see that 5 of the nodes are the top 10 for both closeness (red color) and betweenness (diamond shape). This is not surprising as they serve similar roles, but I liked this way of differentiating them [from Visible Network Labs](https://visiblenetworklabs.com/2021/04/16/understanding-network-centrality/):
 
+> Centrality is a helpful measure for identifying key players in a network. Depending on the specific measure used, centrality means a network is directly connected to many others (degree centrality), close to many others indirectly (closeness centrality), or serve as a key broker between many other nodes (betweenness centrality).
 
+I interpret this to mean that the broker provides connections between clusters that otherwise would not be as closely related. For example, BLVRB is an enzyme in the liver that helps in the catabolism of disparate molecules like biliverdin and riboflavin. Perhaps in this context, it suggests that malformed uterine cords lead to higher demand for waste products to be broken down.
 
-```{r}
-sw <-
-    play_smallworld(
-        n_dim = 1,
-        dim_size = 15,
-        order = 3,
-        p = 0.1
+### HBLCs
+
+Here is a rough means of identifying HBLC's by finding those that are in the top 10 for betweenness, but not for closeness or hub score:
+
+```{r message=FALSE, warning=FALSE}
+hblcs <-
+    maximal_muc_huttlin |>
+    mutate(
+        hub_score = centrality_eigen(),
+        closeness_score = centrality_closeness(),
+        betweenness_score = centrality_betweenness()
+    ) |>
+    as_tibble() |> 
+    select(
+        official_symbol,
+        hub_score,
+        closeness_score,
+        betweenness_score
+    ) |> 
+    semi_join(top_10_between) |> 
+    anti_join(top_10_close) |> 
+    anti_join(top_10_hubs) |> 
+    arrange(
+        desc(betweenness_score),
+        hub_score,
+        closeness_score
     )
 
-ggraph(sw, layout = 'linear', circular = TRUE) + 
-    geom_node_point() +
-    geom_edge_fan() + 
-    coord_fixed()
+hblcs
 ```
 
+SERPINB5 is the most likely candidate by this method. Ironically, [scientific consensus](https://en.wikipedia.org/wiki/Maspin) cannot agree on a specific role for this protein, although it may be involved in tumor suppression.
+
+Here are the candidates on the graph (triangles):
+
+```{r}
+maximal_muc_huttlin |> 
+    mutate(
+        shape_var =
+            case_when(
+                official_symbol %in% top_10_close$official_symbol ~ "close",
+                official_symbol %in% hblcs$official_symbol ~ "hblc",
+                TRUE ~ "neither"
+            ),
+        in_top_10_between = official_symbol %in% top_10_between$official_symbol,
+        of_interest = 
+            official_symbol %in% c(
+                top_10_close$official_symbol, 
+                top_10_between$official_symbol,
+                hblcs$official_symbol
+            )
+    ) |> 
+    ggraph(layout='igraph', algorithm='fr') +
+    geom_node_point(
+        aes(
+            shape = shape_var,
+            color = in_top_10_between,
+            size = of_interest
+        )
+    ) +
+    scale_shape_manual(values = c("diamond plus", "triangle", "circle")) +
+    scale_size_manual(values = c(1, 3)) +
+    scale_color_manual(values = c("black", "red")) +
+    geom_edge_link(alpha = 0.2) +
+    theme_graph()
+```
+
+Looking at the HBLCs, they seem to be acting as brokers to clusters of nodes that would likely otherwise not be on the graph. Physiologically, these HBLC's might be top candidates for proteins essential for development of the malformed umbilical cord phenotype (or for its prevention).
+
+# Citations {-}
