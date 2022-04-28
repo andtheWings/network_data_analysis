@@ -20,3 +20,8 @@
 #     ) |> 
 #     unnest(SWI) |> 
 #     unnest(SWI)
+# 
+# 
+# EnvStats::demp(x = 2.679, obs = erdos_renyi_sims$SWI)
+# 
+# EnvStats::pemp(q = 3, obs = erdos_renyi_sims$SWI) - EnvStats::pemp(q = 2.5, obs = erdos_renyi_sims$SWI)
