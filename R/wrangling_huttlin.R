@@ -103,3 +103,73 @@ assemble_huttlin_edges <- function(huttlin_df) {
     
     return(huttlin_edges)
 }
+
+assemble_huttlin_graph <- function(huttlin_nodes_df, huttlin_edges_df) {
+    
+    graph1 <-
+        tbl_graph(
+            nodes = huttlin_nodes_df, 
+            edges = huttlin_edges_df
+        ) |> 
+        convert(
+            to_simple,
+            remove_multiples = TRUE, 
+            remove_loops = FALSE
+        )
+    
+    return(graph1)
+}
+
+find_huttlin_293T_comms <- function(huttlin_tbl_graph) {
+    
+    graph0 <-
+        huttlin_tbl_graph |> 
+        convert(
+            to_subgraph,
+            cell_line == "293T"
+        )
+    
+    graph3 <- find_communities(graph0)
+    
+    return(graph3)
+}
+
+wrangle_huttlin_293T_comms_filtered_to_eprs_stat5b <- function(huttlin_293T_comms_tbl_graph) {
+    
+    graph1 <-
+        huttlin_293T_comms_tbl_graph |> 
+        convert(
+            to_subgraph,
+            louvain_community %in% c(10, 12) |
+                walktrap_community %in% c(24, 33) |
+                spinglass_community %in% c(15, 17)
+        ) |> 
+        mutate(
+            louvain_cat = 
+                case_when(
+                    louvain_community == 10 ~ "EPRS in 10",
+                    louvain_community == 12 ~ "STATB5 in 12",
+                    TRUE ~ "Other"
+                ),
+            walktrap_cat = 
+                case_when(
+                    walktrap_community == 24 ~ "STAT5B in 24",
+                    walktrap_community == 33 ~ "EPRS in 33",
+                    TRUE ~ "Other"
+                ),
+            spinglass_cat = 
+                case_when(
+                    spinglass_community == 15 ~ "STATB5 in 15",
+                    spinglass_community == 17 ~ "EPRS in 17",
+                    TRUE ~ "Other"
+                ),
+            prot_of_interest =
+                case_when(
+                    official_symbol == "EPRS" ~ "EPRS",
+                    official_symbol == "STAT5B" ~ "STAT5B",
+                    TRUE ~ "Other"
+                )
+        )
+    
+    return(graph1)
+}

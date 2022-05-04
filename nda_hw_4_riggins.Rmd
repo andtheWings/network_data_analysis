@@ -1,0 +1,342 @@
+---
+title: "Homework 4 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "`r Sys.Date()`"
+bibliography: network_citations.bib
+output: html_document
+---
+
+## Prep
+
+Load needed dependencies:
+
+```{r message=FALSE, warning=FALSE}
+library(ggraph)
+library(igraph)
+library(targets)
+library(tidygraph)
+library(tidyverse)
+source("R/wrangling_generic_graphs.R")
+source("R/wrangling_huttlin.R")
+source("R/visualization_for_hw4.R")
+```
+
+Ensure data pipeline is fresh and load it:
+
+```{r}
+tar_make()
+
+MUC_huttlin_graph <-
+    tar_read(MUC_huttlin_graph) |> 
+    convert(to_undirected) 
+```
+
+## Maximal Cliques
+
+Get the number of maximal cliques in the graph:
+
+```{r}
+count_max_cliques(MUC_huttlin_graph)
+```
+Get a table of the distribution of clique sizes:
+
+```{r}
+maximal_cliques <-
+    MUC_huttlin_graph |> 
+    max_cliques()
+
+maximal_clique_lengths <-
+    maximal_cliques |> 
+    map_int(~length(.x))
+
+maximal_clique_lengths |> 
+    as.factor() |> 
+    summary()
+```
+The largest maximal clique consists of eight nodes.
+
+Plot the largest maximal clique:
+
+```{r}
+largest_clique <-
+    induced_subgraph(
+        graph = MUC_huttlin_graph,
+        vids = maximal_cliques[[ which.max(maximal_clique_lengths) ]]
+    ) 
+    
+plot(
+    largest_clique,
+    vertex.label = V(largest_clique)$official_symbol,
+    vertex.label.dist = 3
+)
+
+```
+
+This clique represents a protein complex called TRiC, which acts as a chaperone to aid in folding of cytoskeletal elements like actin and tubulin. It makes sense that such a complex would be relevant to the malformed umbilical cord phenotype that has intra- and extracellular aberrations in structure.
+
+## Community Detection
+
+### In the PPI dataset
+
+I tried a few different ways of choosing proteins for this section of the HW. Initially, I tried drawing from the graph in the previous section that is an intersection of proteins differentially expressed in the malformed umbilical cord (MUC) phenotype from Park et al. 2009 and the protein interaction data set made by Huttlin et al. (2021). However, this graph was artificially subsetted and the community detection was artificially fragmented as a result. Next, I tried doing community detection in the full Huttlin data set for the 293T cell line. However, using this full set, all the algorithms seemed to place the MUC-involved proteins in the same community. So to make the plots more interesting, I filtered specifically for proteins that had interesting differences of community placement that were also in communities small enough to effectively visualize on a plot (less than 500 proteins). I settled on the proteins EPRS (a tRNA-synthetase) and STAT5B (a transcription) factor. Broadly speaking, it should make sense for these proteins to sometimes group together since they are both involved in RNA processing.
+
+Sidenote: Because community detection is a computationally expensive activity, I have added this process to my {[targets](https://docs.ropensci.org/targets/)} data pipeline so I don't have to keep rerunning the code when I render this Rmarkdown document. Please see function `find_293T_communities()` in [my Github repo](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_huttlin.R) to see how I did this using the Louvain, Walktrap, and Spinglass methods.
+
+```{r}
+tar_load(huttlin_293T_comms) 
+```
+
+Show communities for these two proteins:
+
+```{r}
+huttlin_293T_comms |> 
+    activate(nodes) |> 
+    as_tibble() |> 
+    select(
+        official_symbol, 
+        louvain_community, 
+        walktrap_community, 
+        spinglass_community
+    ) |>
+    filter(official_symbol %in% c("EPRS", "STAT5B"))
+```
+
+```{r include=FALSE}
+rm(huttlin_293T_comms)
+```
+
+Please see function `wrangle_huttlin_293T_comms_filtered_to_eprs_stat5b()` in [my Github repo](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_huttlin.R) for further pre-processing I did to plot all proteins grouped with EPRS and STAT5B in at least one of the community detection methods.
+
+```{r}
+tar_load(huttlin_293T_comms_filtered_to_eprs_stat5b)
+```
+
+Plot based on different community detection methods:
+
+```{r}
+ggraph(
+    huttlin_293T_comms_filtered_to_eprs_stat5b, 
+    layout = "igraph", 
+    algorithm = "fr"
+) +
+geom_edge_fan(
+    alpha = 0.20
+) +
+geom_node_point(
+    aes(
+        color = louvain_cat,
+        size = prot_of_interest,
+        shape = prot_of_interest
+    )
+) +
+scale_color_manual(
+    name = "Community Index",
+    values = c("red3", "seagreen4", "steelblue3")
+) +
+scale_size_manual(
+    name = "Protein",
+    values = c(6, 1, 6)
+) +
+scale_shape_manual(
+    name = "Protein",
+    values = c("triangle", "circle filled", "square")
+) +
+labs(title = "Louvain Communities") +
+theme_graph()
+```
+
+```{r}
+ggraph(
+    huttlin_293T_comms_filtered_to_eprs_stat5b, 
+    layout = "igraph", 
+    algorithm = "fr"
+) +
+geom_edge_fan(
+    alpha = 0.20
+) +
+geom_node_point(
+    aes(
+        color = walktrap_cat,
+        size = prot_of_interest,
+        shape = prot_of_interest
+    )
+) +
+scale_color_manual(
+    name = "Community Index",
+    values = c("red3", "seagreen4", "steelblue3")
+) +
+scale_size_manual(
+    name = "Protein",
+    values = c(6, 1, 6)
+) +
+scale_shape_manual(
+    name = "Protein",
+    values = c("triangle", "circle filled", "square")
+) +
+labs(title = "Walktrap Communities") +
+theme_graph()
+```
+```{r}
+ggraph(
+    huttlin_293T_comms_filtered_to_eprs_stat5b, 
+    layout = "igraph", 
+    algorithm = "fr"
+) +
+geom_edge_fan(
+    alpha = 0.20
+) +
+geom_node_point(
+    aes(
+        color = spinglass_cat,
+        size = prot_of_interest,
+        shape = prot_of_interest
+    )
+) +
+scale_color_manual(
+    name = "Community Index",
+    values = c("red3", "seagreen4", "steelblue3")
+) +
+scale_size_manual(
+    name = "Protein",
+    values = c(6, 1, 6)
+) +
+scale_shape_manual(
+    name = "Protein",
+    values = c("triangle", "circle filled", "square")
+) +
+labs(title = "Spinglass Communities") +
+theme_graph()
+```
+
+All three methods produced fairly distinct communities for the proteins in question. Louvain produced the largest communities for EPRS and STAT5B, while Walktrap and Spinglass placed them in fairly constrained clusters. Interestingly, the Spinglass method grouped isolated clusters of 2-3 nodes into communities with the proteins of interest. I am guessing this is an artifact of subsetting the graph *after* running the algorithms and that if we could visualize the whole data set effectively, it would be more clear why these isolated proteins were grouped into their communities. 
+
+Given that the detection algorithms were run on the whole dataset of 293T cells, communities should be interpreted as serving some broad category of physiological task within the context of all cellular protein functions.
+
+### Erdos-Renyi Communities
+
+Make a random graph with 100 nodes and 300 edges, run community detection algorithms, then count the number of communities detected using each method:
+
+```{r}
+erdos <-
+    play_erdos_renyi(
+        n = 100,
+        m = 300, 
+        directed = TRUE, 
+        loops = FALSE
+    ) |> 
+    find_communities()
+
+erdos_comm_counts <-
+    erdos |>
+    as_tibble() |> 
+    summarize(
+        n_louvain_comms = max(louvain_community),
+        n_walktrap_comms = max(walktrap_community),
+        n_spinglass_comms = max(spinglass_community)
+    ) |> 
+    add_column(graph_type = "erdos")
+```
+
+Plot the communities by color gradient using each detection method. See function `make_comm_comparison_plot()` in [my github repo](https://github.com/andtheWings/network_data_analysis/blob/main/R/visualization_for_hw4.R) for the plotting code:
+
+```{r}
+make_comm_comparison_plot(erdos, louvain_community, "Random Graph Communities from Louvain Method")
+```
+
+```{r}
+make_comm_comparison_plot(erdos, walktrap_community, "Random Graph Communities from Walktrap Method")
+```
+
+```{r}
+make_comm_comparison_plot(erdos, spinglass_community, "Random Graph Communities from Spinglass Method")
+```
+
+It is hard to detect patterns in how the communities were assigned, which makes sense given the random nature of this graph's origin.
+
+### Small-World Communities
+
+Wash and repeat for a small-world graph:
+
+```{r}
+small_world <-
+    make_lattice(
+        length = 100, 
+        dim = 1, 
+        nei = 3, 
+        circular = TRUE
+    ) |> 
+    rewire(each_edge(0.1)) |>
+    as_tbl_graph() |> 
+    find_communities()
+
+small_world_comm_counts <-
+    small_world |>
+    as_tibble() |> 
+    summarize(
+        n_louvain_comms = max(louvain_community),
+        n_walktrap_comms = max(walktrap_community),
+        n_spinglass_comms = max(spinglass_community)
+    ) |> 
+    add_column(graph_type = "small_world")
+```
+```{r}
+make_comm_comparison_plot(small_world, louvain_community, "Small World Communities from Louvain Method")
+```
+
+```{r}
+make_comm_comparison_plot(small_world, walktrap_community, "Small World Communities from Walktrap Method")
+```
+
+```{r}
+make_comm_comparison_plot(small_world, spinglass_community, "Small World Communities from Spinglass Method")
+```
+
+The small-world communities seem to coalesce around cliques of nodes.
+
+### Scale-Free Communities
+
+Wash and repeat for a scale-free graph. Sidenote: If there is a way to specify an exact number of edges you want for your scale-free simulation, I couldn't figure out how to do that. That said, the parameters below get close to the right number with 294 edges:
+
+```{r}
+scale_free <-
+    sample_pa(
+        n = 100,
+        power = 1.25,
+        m = 3
+    ) |> 
+    as_tbl_graph() |> 
+    find_communities()
+
+scale_free_comm_counts <-
+    scale_free |>
+    as_tibble() |> 
+    summarize(
+        n_louvain_comms = max(louvain_community),
+        n_walktrap_comms = max(walktrap_community),
+        n_spinglass_comms = max(spinglass_community)
+    ) |> 
+    add_column(graph_type = "scale_free")
+```
+```{r}
+make_comm_comparison_plot(scale_free, louvain_community, "Scale-Free Communities from Louvain Method")
+```
+
+```{r}
+make_comm_comparison_plot(scale_free, walktrap_community, "Scale-Free Communities from Walktrap Method")
+```
+
+```{r}
+make_comm_comparison_plot(scale_free, spinglass_community, "Scale-Free Communities from Spinglass Method")
+```
+
+The scale-free communities tend to bunch around nodes with high centrality.
+
+#### Comparing the numbers:
+
+```{r}
+erdos_comm_counts |> 
+    add_row(small_world_comm_counts) |> 
+    add_row(scale_free_comm_counts)
+```
+
+All three detection methods across all three graph types produced community counts with similar orders of magnitude. The walk trap method seems to typically produce the highest number of communities. The scale-free graph type produces the highest variability in community counts.

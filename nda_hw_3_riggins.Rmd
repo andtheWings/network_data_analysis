@@ -54,7 +54,6 @@ simpleNetwork(
 )
 ```
 
-
 For comparison of overall topology, we will also make a random graph using the Erdos-Renyi algorithm.
 
 ```{r message=FALSE, warning=FALSE}
@@ -157,10 +156,10 @@ In contrast, the log-log plot of the random graph follows a more Poisson-like di
 
 Definitions:
 
-- Hub protein - highly connected protein
-- Closeness - how quickly information can be transferred in a network
-- Betweenness centrality - nodes important to information transfer by mediating many shortest paths
-- HBLC - nodes that mediate many shortest paths, but themselves are not highly connected (connectors between modules)
+-   Hub protein - highly connected protein
+-   Closeness - how quickly information can be transferred in a network
+-   Betweenness centrality - nodes important to information transfer by mediating many shortest paths
+-   HBLC - nodes that mediate many shortest paths, but themselves are not highly connected (connectors between modules)
 
 ### Hubs
 
@@ -192,7 +191,7 @@ maximal_muc_huttlin |>
     theme_graph()
 ```
 
-Removing these nodes from the graph makes it more disjoint. From physiologic perspective, these are likely proteins whose roles are relevant to multiple types of cellular function important to formation of a normal umbilical cord. For example, the protein with the highest hub score is LGALS1, which is a Galectin 1, which is a important to proper scaffolding of blood vessels in angiogenesis. 
+Removing these nodes from the graph makes it more disjoint. From physiologic perspective, these are likely proteins whose roles are relevant to multiple types of cellular function important to formation of a normal umbilical cord. For example, the protein with the highest hub score is LGALS1, which is a Galectin 1, which is a important to proper scaffolding of blood vessels in angiogenesis.
 
 ### Closeness
 
@@ -347,4 +346,4 @@ maximal_muc_huttlin |>
 
 Looking at the HBLCs, they seem to be acting as brokers to clusters of nodes that would likely otherwise not be on the graph. Physiologically, these HBLC's might be top candidates for proteins essential for development of the malformed umbilical cord phenotype (or for its prevention).
 
-# Citations {-}
+# Citations {.unnumbered}

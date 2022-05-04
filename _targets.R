@@ -37,8 +37,20 @@ list(
     ),
     tar_target(
         name = huttlin_graph,
-        command = tbl_graph(nodes = huttlin_nodes, edges = huttlin_edges)
+        command = assemble_huttlin_graph(huttlin_nodes, huttlin_edges)
     ),
+    tar_target(
+        name = huttlin_293T_comms,
+        command = find_huttlin_293T_comms(huttlin_graph)
+    ),
+    tar_target(
+        name = huttlin_293T_comms_filtered_to_eprs_stat5b,
+        command = wrangle_huttlin_293T_comms_filtered_to_eprs_stat5b(huttlin_293T_comms)
+    ),
+    # tar_target(
+    #     name = eprs_stat5b_comms,
+    #     command = find_communities(huttlin_293T_comms_filtered_to_eprs_stat5b)
+    # ),
     # Wrangling Park
     #
     # This source file comes from:
