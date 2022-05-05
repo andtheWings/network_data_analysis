@@ -3,10 +3,12 @@ library(targets)
 source("R/wrangling_generic_graphs.R")
 source("R/wrangling_huttlin.R")
 source("R/wrangling_shared_MUC_orthologs.R")
+source("R/describing_generic_data.R")
+source("R/wrangling_llinas.R")
 
 # Set target-specific options such as packages.
 tar_option_set(
-    packages = c("dplyr", "igraph", "tidyr", "tidygraph", "ggraph")
+    packages = c("dplyr", "huge", "igraph", "tidyr", "tidygraph", "ggraph")
 )
 
 # End this file with a list of target objects.
@@ -80,6 +82,61 @@ list(
     tar_target(
         name = MUC_huttlin_graph,
         command = localize_MUC_huttlin_graph(huttlin_orthologs_shared_w_park, huttlin_graph)
+    ),
+    # Wrangling Llinas
+    tar_target(
+        name = llinas_treatments_raw_file,
+        "data/llinas_2021_metabolomics.csv",
+        format = "file"
+    ),
+    tar_target(
+        name = llinas_treatments_raw,
+        command = readr::read_csv(llinas_treatments_raw_file)
+    ),
+    tar_target(
+        name = transposed_llinas_treatments_raw,
+        command = transpose_llinas_raw(llinas_treatments_raw)
+    ),
+    tar_target(
+        name = llinas_treatments_modified_file,
+        "data/expanded_transposed_llinas_2021.csv",
+        format = "file"
+    ),
+    tar_target(
+        name = llinas_treatments_modified,
+        command = readr::read_csv(llinas_treatments_modified_file)
+    ),
+    tar_target(
+        name = llinas_treatments_pre_ggm,
+        command = wrangle_llinas_pre_ggm(llinas_treatments_modified)
+    ),
+    tar_target(
+        name = llinas_treatments_ggm,
+        command = huge(llinas_treatments_pre_ggm, method = "glasso", cov.output=TRUE)
+    ),
+    tar_target(
+        name = llinas_treatments_ggm_ric,
+        command = huge.select(llinas_treatments_ggm, criterion = "ric")
+    ),
+    tar_target(
+        name = llinas_treatments_ggm_stars,
+        command = huge.select(llinas_treatments_ggm, criterion = "stars")
+    ),
+    # tar_target(
+    #     name = llinas_ggm_ebic,
+    #     command = huge.select(llinas_ggm, criterion = "ebic")
+    # ),
+    tar_target(
+        name = llinas_metabolites_file,
+        "data/llinas_2021_metabolites.csv",
+        format = "file"
+    ),
+    tar_target(
+        name = llinas_metabolite_nodes,
+        command = readr::read_csv(llinas_metabolites_file)
+    ),
+    tar_target(
+        name = llinas_metabolite_graph,
+        command = assemble_llinas_metabolite_graph(llinas_metabolite_nodes, llinas_treatments_ggm_ric)
     )
-    
 )

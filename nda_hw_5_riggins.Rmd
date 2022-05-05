@@ -1,0 +1,231 @@
+---
+title: "Homework 5 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "`r Sys.Date()`"
+bibliography: network_citations.bib
+output: html_document
+---
+
+## Prep
+
+```{r message=FALSE, warning=FALSE}
+library(corpcor)
+library(dplyr)
+library(ggraph)
+library(huge)
+library(igraph)
+library(readr)
+library(targets)
+library(tidygraph)
+library(tidyr)
+source("R/describing_generic_data.R")
+```
+
+Ensure underlying data pipeline is fresh:
+
+```{r}
+tar_make()
+```
+
+## The Dataset
+
+I derived my dataset from the study entitled, "[Profiling Plasmodium falciparum parasites and human red blood cells after treatment with MMV693183](https://www.metabolomicsworkbench.org/data/DRCCMetadata.php?Mode=Study&DataMode=AllData&StudyID=ST001985&StudyType=MS&ResultType=1#DataTabs)" by Llinas et al. (2021). The authors set out to examine metabolomic changes in human red blood cells infected with malaria when they were treated with a novel anti-malarial compound. 
+
+Samples were differentiated by the following variables:
+
+- Date of assay
+- Whether the sample contained the treatment compound (MMV693183)
+- If it contained the compound, at what dosage (2.4 [IC50], 24, or 240 nM)
+- The sample target (None, Uninfected RBCs, Infected RBCs)
+
+Their analysis platform was untargeted LC/ESI-MS using the Thermo Orbitrap.
+
+There are 196 metabolites whose abundance are measured.
+
+## Data Prep
+
+Per usual, I incorporated the data prep stages into my {[targets](https://docs.ropensci.org/targets/)} [pipeline](https://github.com/andtheWings/network_data_analysis/blob/main/_targets.R). Custom functions can be found in [my Github repo](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_llinas.R).
+
+First, I transposed the data from containing metabolites in rows and sample ID's in columns:
+
+```{r}
+llinas_raw <- read_csv("data/llinas_2021_metabolomics.csv")
+
+llinas_raw
+```
+
+To the opposite:
+
+```{r eval=FALSE}
+transposed_llinas_raw <-
+    llinas_raw |> 
+    tidyr::pivot_longer(
+        cols = 2:73,
+        names_to = "id"
+    ) |> 
+    tidyr::pivot_wider(
+        names_from = Samples,
+        values_from = value
+    )
+```
+
+```{r include=FALSE}
+tar_load(transposed_llinas_treatments_raw)
+```
+
+```{r}
+transposed_llinas_treatments_raw
+```
+
+Then I exported the data and manually added columns to encode different pieces of information in the id column:
+
+```{r eval=FALSE}
+write_csv(transposed_llinas_raw, "data/transposed_llinas_2021.csv")
+
+llinas_treatments_modified <- read_csv("data/expanded_transposed_llinas_2021.csv")
+```
+
+```{r include=FALSE}
+tar_load(llinas_treatments_modified)
+```
+
+```{r}
+llinas_treatments_modified
+```
+ 
+Next, I identified which metabolite variables had over 10% of data missing using a custom function. There were 2:
+
+```{r}
+missing_vars <- find_vars_w_missing_data_above_threshold(llinas_treatments_modified, 0.1)
+
+missing_vars
+```
+
+Next, I prepared my metabolite matrix by removing all non-metabolite columns/the metabolite columns with missing data and standardizing the abundance measurements:
+
+```{r eval=FALSE}
+llinas_treatments_pre_ggm <-
+        llinas_treatments_modified |> 
+        select(
+            -id,
+            -date,
+            -treatment,
+            -target,
+            -dosage,
+            -replicate,
+            -missing_vars
+        ) |> 
+        datawizard::standardise() |> 
+        as.matrix()
+```
+
+```{r include=FALSE}
+tar_load(llinas_treatments_pre_ggm)
+```
+
+```{r}
+llinas_treatments_pre_ggm[1:5,1:5]
+```
+
+One final note: I also manually added a variable to the table of metabolite nodes that assigned a broad biomolecular category to each metabolite using the [ChEBI Ontology](https://bioportal.bioontology.org/ontologies/CHEBI).
+
+```{r}
+tar_load(llinas_metabolite_nodes)
+
+llinas_metabolite_nodes
+```
+
+## Graphical Guassian Model (GGM) Estimation
+
+I inferred edge relationships between the metabolites using the {[huge](https://cran.r-project.org/web/packages/huge/)} package's graphical lasso method:
+
+```{r eval=FALSE}
+llinas_treatments_ggm <- huge(llinas_treatments_pre_ggm, method = "glasso", cov.output=TRUE)
+```
+
+```{r include=FALSE}
+tar_load(llinas_treatments_ggm)
+```
+
+```{r}
+llinas_treatments_ggm
+```
+
+I used two methods for selecting the threshold parameter's value. Rotation information criterion (RIC):
+
+```{r eval=FALSE}
+llinas_treatments_ggm_ric <- huge.select(llinas_treatments_ggm, criterion="ric", cov.output=TRUE)
+```
+
+```{r include=FALSE}
+tar_load(llinas_treatments_ggm_ric)
+```
+
+```{r}
+llinas_treatments_ggm_ric
+```
+Which yielded a sparsity level of 0.24:
+
+```{r}
+plot(llinas_treatments_ggm_ric)
+```
+
+And the stability approach for regularization selection (StARs):
+
+```{r eval=FALSE}
+llinas_treatments_ggm_stars <- huge.select(llinas_treatments_ggm, criterion="stars")
+```
+
+```{r include=FALSE}
+tar_load(llinas_treatments_ggm_stars)
+```
+
+```{r}
+llinas_treatments_ggm_stars
+```
+
+Which was unsuccessful and yielded a sparsity level of 0.
+
+```{r}
+plot(llinas_treatments_ggm_stars)
+```
+
+Next I assembled my final graph using a custom function:
+
+```{r eval=FALSE}
+llinas_metabolite_graph <- assemble_llinas_metabolite_graph(llinas_metabolite_nodes, llinas_treatments_ggm_ric)
+```
+
+```{r include=FALSE}
+tar_load(llinas_metabolite_graph)
+```
+
+And graphed the inferred network, coloring nodes by the broad biomolecular type, and weighting edges by their partial correlation values:
+
+```{r message=FALSE, warning=FALSE}
+ggraph(
+        llinas_metabolite_graph
+    ) +
+    geom_edge_link(
+        aes(
+            color = abs(weight)
+        ),
+        alpha = 0.6
+    ) +
+    scale_edge_color_gradient(
+        name = "Partial Correlation",
+        low = "white",
+        high = "black"
+    ) +
+    geom_node_point(
+        aes(
+            color = chem_cat
+        )
+    ) +
+    labs(
+        title = "Inferred metabolite relationships in the \n Llinas experimental assays",
+        color = "Molecule Type"
+    ) +
+    theme_graph()
+```
+
