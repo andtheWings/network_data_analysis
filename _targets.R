@@ -1,14 +1,17 @@
 library(targets)
 
+source("R/describing_generic_data.R")
+source("R/wrangling_dingo.R")
 source("R/wrangling_generic_graphs.R")
 source("R/wrangling_huttlin.R")
-source("R/wrangling_shared_MUC_orthologs.R")
-source("R/describing_generic_data.R")
 source("R/wrangling_llinas.R")
+source("R/wrangling_shared_MUC_orthologs.R")
+
+
 
 # Set target-specific options such as packages.
 tar_option_set(
-    packages = c("dplyr", "huge", "igraph", "tidyr", "tidygraph", "ggraph")
+    packages = c("dplyr", "huge", "iDINGO", "igraph", "tidyr", "tidygraph", "ggraph")
 )
 
 # End this file with a list of target objects.
@@ -126,6 +129,10 @@ list(
     #     name = llinas_ggm_ebic,
     #     command = huge.select(llinas_ggm, criterion = "ebic")
     # ),
+    # tar_target(
+    #     name = llinas_pcor_matrix,
+    #     command = corpcor::cor2pcor(cov2cor(llinas_treatments_ggm_ric$opt.cov))
+    # ),
     tar_target(
         name = llinas_metabolites_file,
         "data/llinas_2021_metabolites.csv",
@@ -138,5 +145,31 @@ list(
     tar_target(
         name = llinas_metabolite_graph,
         command = assemble_llinas_metabolite_graph(llinas_metabolite_nodes, llinas_treatments_ggm_ric)
+    ),
+    tar_target(
+        name = parasitized_llinas_pre_dingo,
+        command = wrangle_parasitized_llinas_pre_dingo(llinas_treatments_modified)
+    ),
+    tar_target(
+        name = parasitized_llinas_dingo,
+        command = 
+            iDINGO::dingo(
+                dat = parasitized_llinas_pre_dingo[,-1],
+                x = parasitized_llinas_pre_dingo$any_treatment,
+                cores = 4,
+                B = 10
+            )
+    ),
+    tar_target(
+        name = parasitized_llinas_dingo_df,
+        command = convert_parasitized_llinas_dingo_to_df(parasitized_llinas_dingo)
+    ),
+    tar_target(
+        name = parasitized_llinas_dingo_graph,
+        command = 
+            assemble_parasitized_llinas_dingo_graph(
+                llinas_metabolite_nodes, 
+                parasitized_llinas_dingo_df
+            )
     )
 )

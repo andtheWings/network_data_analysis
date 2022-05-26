@@ -170,6 +170,29 @@ Which yielded a sparsity level of 0.24:
 plot(llinas_treatments_ggm_ric)
 ```
 
+```{r}
+llinas_treatments_ggm_ric$refit |> 
+        as_tbl_graph() |> 
+        activate(edges) |> 
+        as_tibble()
+```
+
+
+```{r}
+llinas_metabolite_ric_pcors1 <-
+        llinas_treatments_ggm_ric_obj$opt.cov |> 
+        cov2cor() |> 
+        corpcor::cor2pcor() |> 
+        as_tbl_graph() |> 
+        activate(edges) |> 
+        as_tibble() |> 
+        semi_join(
+            llinas_metabolite_ric_edges1,
+            by = c("from", "to")
+        )
+```
+
+
 And the stability approach for regularization selection (StARs):
 
 ```{r eval=FALSE}

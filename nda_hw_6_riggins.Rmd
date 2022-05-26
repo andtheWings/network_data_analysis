@@ -1,0 +1,189 @@
+---
+title: "Homework 6 for Network Data Analysis"
+author: "Daniel P. Hall Riggins, MD"
+date: "`r Sys.Date()`"
+bibliography: network_citations.bib
+output: html_document
+---
+
+In this assignment, I start with the same dataset as in homework 5 derived from [Llinas et al. (2021)](https://www.metabolomicsworkbench.org/data/DRCCMetadata.php?Mode=Project&ProjectID=PR001261). In this reshaped data set, every column represents a metabolite's abundance level and every row represents different experimental conditions for testing a novel anti-malarial compound MMV693183 against parasitized human red blood cells. The objective is to see if different relationships between metabolites can be inferred in different experimental conditions using the {[iDINGO](https://cran.r-project.org/web/packages/iDINGO/index.html)} package.
+
+## Prep
+
+Load needed libraries:
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ggraph)
+library(targets)
+library(tidygraph)
+```
+
+Per usual, I abstract data prep and the dingo algorithm steps into a {[targets](https://docs.ropensci.org/targets/)} pipeline in order to avoid repeating computationally expensive tasks. You can see the associated functions in my Github repo through the links below.
+
+Refresh the pipeline:
+
+```{r}
+tar_make()
+```
+
+## The DINGO algorithm
+
+I start with my `wrangle_parasitized_llinas_pre_dingo()` [function](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_llinas.R), which filters for only experimental conditions where the sample includes parasitized RBCs (as opposed to controls without any RBCs or with uninfected RBCs), recategorizes treatment as having either any MMV693183 present vs none present, and removes columns that are not metabolite abundance variables:
+
+```{r}
+tar_load(parasitized_llinas_pre_dingo)
+
+parasitized_llinas_pre_dingo[1:6,1:6]
+```
+
+Next, I run the data through the `dingo()` function, which fits a "DINGO model and calculates edge-wise differential scores for all pairwise edges among p variables". I pass the object it returns to my function `convert_parasitized_llina_dingo_to_df()`, which [reshapes the data](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_dingo.R) into a [tibble](https://tibble.tidyverse.org/) with each row representing an edge between two metabolites, [adds some variables](https://github.com/andtheWings/network_data_analysis/blob/main/R/wrangling_llinas.R) to facilitate visualization, performs an [ordered quantile transformation](https://www.rdocumentation.org/packages/bestNormalize/versions/1.8.2/topics/orderNorm) on each edge's differential score to make the distribution more Gaussian, and classifies edges according to the following rules:
+
+-   Sets partial correlation (pcor) threshold between two metabolites (rho) at 0.10--stricter thresholds were not sensitive enough to detect differential trends
+-   Edge is "global" if the pcors for experimental conditions with and without MMV693183 both exceed rho and both pcors have the same sign
+-   Edge is "treatment only" if the pcor for conditions with MMV693183 exceeds rho and the difference score is statistically significant
+-   Edge is "no treatment only" if the pcor for conditions without MMV693183 exceeds rho and the difference score is statistically significant
+-   Edge is NA if the pcors for neither of the experimental conditions exceed rho
+
+```{r}
+tar_load(parasitized_llinas_dingo_df)
+
+glimpse(parasitized_llinas_dingo_df)
+```
+
+## Diagnostics
+
+Let's plot the pcors of metabolite edges for both experimental conditions against each other. The larger, darker, more opaque points have greater differences in pcors between experimental conditions. If a point falls below the dashed line, there is a stronger relationship between the two metabolites in the non-treatment condition, and if it falls above the dashed line, there is a stronger relationship in the treatment condition. The top 4 metabolite pairs with the highest differential scores between experimental conditions are labeled. Please note that even the largest differential scores are not actually that big and that this figure includes all points regardless of whether either pcor is above rho:
+
+```{r message=FALSE, warning=FALSE}
+ggplot(
+    parasitized_llinas_dingo_df,
+    aes(
+        x = pcor1,
+        y = pcor2
+    )
+) +
+geom_abline(
+    intercept = 0, 
+    slope = 1,
+    linetype = 2
+) +
+geom_point(
+    aes(
+        color = abs(orq_diff_score),
+        alpha = plot_alpha,
+        size = plot_size
+    )
+) +
+ggrepel::geom_text_repel(
+    aes(label = plot_label),
+    point.size = NA
+) +
+scale_color_gradient(
+    "# of SD's the \n difference score is \n away from its mean",
+    low = "lightpink", 
+    high = "purple"
+) +
+scale_size_manual(
+    values = c(3, 0.75)
+) +
+scale_alpha_manual(
+    values = c(0.25, 1)
+) +
+guides(
+    size = "none", 
+    alpha = "none"
+) +
+labs(
+    title = "How Metabolite Relationships Vary with Experimental Conditions",
+    x = "Partial Correlation for No Treatment Conditions",
+    y = "Partial Correlation for Any Treatment Conditions"
+) +
+theme_bw()
+```
+
+Now let's verify that as raw difference scores get more extreme, their p-values get lower:
+
+```{r}
+ggplot(
+    parasitized_llinas_dingo_df, 
+    aes(
+        x = diff_score,
+        y = pval
+    )
+) + 
+geom_point(
+    aes(color = abs(diff_score))
+) +
+scale_color_gradient(
+    low = "lightpink",
+    high = "purple"
+) +
+labs(
+   x = "Difference Score",
+   y = "p-value",
+   color = "Difference Score"
+) +
+theme_bw()
+```
+
+## Final Visualization
+
+Let's a assemble a graph that will help us visualize relationships between metabolites and which experimental conditions they exist in. I use my function `assemble_parasitized_llinas_dingo_graph()`. It takes as input the original list of metabolite nodes used in the study and the edge list produced above using `dingo()`. The function filters out all **edges** that were not classified to belong to one of the experimental conditions as classified above, then it performs similar classification on **nodes** into experimental condition groups based on which edges they are touching:
+
+```{r}
+tar_load(parasitized_llinas_dingo_graph)
+
+parasitized_llinas_dingo_graph
+```
+
+Finally, let's visualize our graph. Purple represents metabolites and their relationships that exist in both experimental conditions. We'll fade those into the background and highlight those that specifically show relationships just in the treatment condition with MMV693183 (red) or in the no treatment condition (blue):
+
+```{r message=FALSE, warning=FALSE}
+ggraph(
+    parasitized_llinas_dingo_graph,
+    layout = "igraph",
+    algorithm = "fr"
+) +
+geom_edge_fan(
+    aes(
+        color = exposure_group,
+        alpha = exposure_group
+    )
+) +
+geom_node_point(
+    aes(
+        color = exposure_group,
+        alpha = exposure_group
+    ) 
+) +
+geom_node_text(
+    aes(label = label),
+    repel = TRUE
+) +
+scale_color_manual(
+    "Exposure Group", 
+    values = c("purple", "blue", "red")
+) +
+scale_alpha_manual(
+    "Exposure Group", 
+    values = c(0.1, 0.9, 0.9)
+) +
+scale_edge_color_manual(
+    "Exposure Group", 
+    values = c("purple", "blue", "red")
+) +
+scale_edge_alpha_manual(
+    "Exposure Group", 
+    values = c(0.1, 0.9, 0.9)
+) +
+labs(
+    title = "Metabolite relationships in parasitized human RBCs varying by \n treatment with antimalarial compound MMV693183"
+) +
+theme_graph()
+```
+
+I am not an expert in metabolism (surprise!). With the limited knowledge I do have, I can't explain why these particular metabolites would form relationships in different groups. On Stanford's excellent [interactive infographic](http://interactivepathways.stanford.edu/) of human metabolism pathways, none of these metabolites naturally feed into the same pathways. Looking at the no treatment group, D-glyceraldehyde-3-phosphate is involved in the core glycolysis pathway for turning sugar into energy, tyrosine is an amino acid, 1-methyladenosine is a modified nucleoside building block for RNA/DNA, and inosine is a product of nucleotide breakdown. Perhaps you could argue these are all tied to an overall catabolic state, but that's a pretty loose interpretation. In the treatment group, N-acetyl-alanine is a modified amino acid, orotidine-5'-phosphate is involved in nucleoside synthesis, cGMP is a widespread signaling molecule, a-ketoglutarate is a widespread molecule utilized in the Kreb's Cycle, and I cannot figure out what DLH is. I cannot detect any salient theme from these treatment relationships.
+
+Sidenote: One issue might be that we are drawing metabolites from samples that include cells from humans **and** malaria parasites, both of which can produce metabolites and thus might be muddying the picture for each other.

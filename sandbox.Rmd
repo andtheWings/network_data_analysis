@@ -1,0 +1,85 @@
+---
+title: "Sandbox"
+author: "Daniel P. Hall Riggins, MD"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(sf)
+library(opencage)
+```
+
+```{r}
+oc_forward_df("01331")
+
+parse_spec <-
+    cols(
+      `Case Number` = col_character(),
+      `Date of Incident` = col_character(),
+      `Date of Death` = col_character(),
+      Age = col_double(),
+      Gender = col_character(),
+      Race = col_character(),
+      Latino = col_logical(),
+      `Manner of Death` = col_character(),
+      `Primary Cause` = col_character(),
+      `Primary Cause Line A` = col_character(),
+      `Primary Cause Line B` = col_character(),
+      `Primary Cause Line C` = col_character(),
+      `Secondary Cause` = col_character(),
+      `Gun Related` = col_logical(),
+      `Opioid Related` = col_logical(),
+      `Cold Related` = col_logical(),
+      `Heat Related` = col_logical(),
+      `Commissioner District` = col_double(),
+      `Incident Address` = col_character(),
+      `Incident City` = col_character(),
+      `Incident Zip Code` = col_character(),
+      longitude = col_double(),
+      latitude = col_double(),
+      location = col_character(),
+      `Residence City` = col_character(),
+      `Residence Zip` = col_character(),
+      OBJECTID = col_double(),
+      `Chicago Ward` = col_double(),
+      `Chicago Community Area` = col_character(),
+      `COVID Related` = col_logical()
+    )
+
+med_exam <- 
+    read_csv(
+        "data/Medical_Examiner_Case_Archive.csv",
+        col_types = parse_spec
+    )
+
+med_exam |> 
+    rename(
+        from = `Incident Zip Code`,
+        to = `Residence Zip`
+    ) |> 
+    filter(!is.na(from) & !is.na(to)) |>
+    filter(!is.na(longitude) & !is.na(latitude)) |> 
+    filter(from != "00000" & to != "00000") |> 
+    filter(from != to) |>
+    st_as_sf(
+        coords = c("longitude", "latitude"),
+        crs = 4326
+    )
+    view()
+    group_by(from, to) |> 
+    summarise(
+        weight = n(),
+        .groups = "keep"
+    ) |> 
+    as_tbl_graph() |> 
+    ggraph(layout = "igraph", algorithm = "kk") +
+    geom_node_point() +
+    geom_edge_fan()
+    
+c(med_exam$`Incident Zip Code`, med_exam$`Residence Zip`) |> unique() |> length()
+```
+
