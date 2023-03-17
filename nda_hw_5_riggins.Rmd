@@ -85,6 +85,10 @@ write_csv(transposed_llinas_raw, "data/transposed_llinas_2021.csv")
 llinas_treatments_modified <- read_csv("data/expanded_transposed_llinas_2021.csv")
 ```
 
+```{r}
+box::use(riggins/graph_generics/wrangling_generic_graphs)
+```
+
 ```{r include=FALSE}
 tar_load(llinas_treatments_modified)
 ```

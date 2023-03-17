@@ -14,3 +14,5 @@ R/gavin_ex.R
 R/yeast_ppi.R
 
 example_scripts/
+
+.Rproj.user.backup/
